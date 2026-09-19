@@ -7,20 +7,49 @@ import { NotationMeasureCanvas } from './components/NotationMeasureCanvas';
 import { RhythmNotationBox } from './components/RhythmNotationBox';
 import { createNotationElement } from './utils/notationUtils';
 
-export function App() {
-  const [isPlaying, setIsPlaying] = useState<boolean>(false);
-  const [bpm, setBpm] = useState<number>(80);
-  const [timeSigNum, setTimeSigNum] = useState<number>(4);
-  const [timeSigDen, setTimeSigDen] = useState<number>(4);
+const STORAGE_KEY = 'polyrhythm_metronome_state_v1';
 
-  // A measure always starts complete. Editing replaces time; it never adds or
-  // removes time from the bar.
-  const [elements, setElements] = useState<NotationElement[]>([
+function getDefaultElements(): NotationElement[] {
+  return [
     createNotationElement('quarter', false, false, false, false, true),
     createNotationElement('quarter'),
     createNotationElement('quarter'),
     createNotationElement('quarter'),
-  ]);
+  ];
+}
+
+function loadSavedState() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      const data = JSON.parse(saved);
+      if (Array.isArray(data.elements) && data.elements.length > 0) {
+        return {
+          bpm: typeof data.bpm === 'number' ? data.bpm : 80,
+          timeSigNum: typeof data.timeSigNum === 'number' ? data.timeSigNum : 4,
+          timeSigDen: typeof data.timeSigDen === 'number' ? data.timeSigDen : 4,
+          soundType: (data.soundType as SoundType) || 'woodblock',
+          elements: data.elements as NotationElement[],
+        };
+      }
+    }
+  } catch {}
+  return null;
+}
+
+export function App() {
+  const savedState = loadSavedState();
+
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [bpm, setBpm] = useState<number>(savedState?.bpm ?? 80);
+  const [timeSigNum, setTimeSigNum] = useState<number>(savedState?.timeSigNum ?? 4);
+  const [timeSigDen, setTimeSigDen] = useState<number>(savedState?.timeSigDen ?? 4);
+
+  // A measure always starts complete. Editing replaces time; it never adds or
+  // removes time from the bar.
+  const [elements, setElements] = useState<NotationElement[]>(
+    savedState?.elements ?? getDefaultElements()
+  );
 
   // Toolbar state
   const [selectedDuration, setSelectedDuration] = useState<BaseDuration>('quarter');
@@ -33,8 +62,24 @@ export function App() {
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
   const [isPulseAccented, setIsPulseAccented] = useState<boolean>(false);
-  const [soundType, setSoundType] = useState<SoundType>('woodblock');
+  const [soundType, setSoundType] = useState<SoundType>(savedState?.soundType ?? 'woodblock');
   const [isMuted, setIsMuted] = useState<boolean>(false);
+
+  // Save to localStorage on state changes
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          bpm,
+          timeSigNum,
+          timeSigDen,
+          soundType,
+          elements,
+        })
+      );
+    } catch {}
+  }, [bpm, timeSigNum, timeSigDen, soundType, elements]);
 
   // Tap tempo ref
   const tapTimesRef = useRef<number[]>([]);
