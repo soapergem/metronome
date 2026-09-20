@@ -2,13 +2,12 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { NotationElement, BaseDuration } from '../types/metronome';
 import {
   BASE_DURATION_BEATS,
-  NOTE_SYMBOLS,
-  REST_SYMBOLS,
   calculateElementDuration,
   createNotationElement,
   getMeasureCapacity,
 } from '../utils/notationUtils';
 import { RotateCcw, Star, VolumeX, MousePointer, Hand } from 'lucide-react';
+import { MusicalRestIcon, MusicalNoteIcon } from './MusicalIcons';
 
 interface ToolPayload {
   kind?: 'value';
@@ -647,8 +646,9 @@ function NotationGlyph({
 }) {
   if (element.isRest) {
     return (
-      <div className={`mb-6 font-[serif] text-4xl leading-none transition-transform ${active ? 'scale-125 text-sky-400' : 'text-slate-400'}`}>
-        {REST_SYMBOLS[element.baseDuration]}{element.isDotted && <span className="ml-1 text-xl text-slate-300">•</span>}
+      <div className={`mb-6 flex items-center justify-center transition-transform ${active ? 'scale-125 text-sky-400' : 'text-slate-400'}`}>
+        <MusicalRestIcon duration={element.baseDuration} className="w-8 h-8" />
+        {element.isDotted && <span className="ml-1 text-xl text-slate-300">•</span>}
       </div>
     );
   }
@@ -693,8 +693,8 @@ function NotationGlyph({
   }
 
   return (
-    <div className={`relative mb-5 transition-transform ${active ? 'scale-125 text-sky-400' : 'text-slate-100'}`}>
-      <span className="font-[serif] text-5xl leading-none">{NOTE_SYMBOLS[element.baseDuration]}</span>
+    <div className={`relative mb-5 transition-transform flex flex-col items-center ${active ? 'scale-125 text-sky-400' : 'text-slate-100'}`}>
+      <MusicalNoteIcon duration={element.baseDuration} className="w-10 h-10" />
       {element.isDotted && <span className="absolute -right-3 bottom-1 text-xl">•</span>}
       {element.isAccented && <span className="absolute -bottom-4 left-1/2 -translate-x-1/2 text-base text-amber-400 font-bold">&gt;</span>}
     </div>

@@ -1,6 +1,7 @@
 import React from 'react';
 import { BaseDuration } from '../types/metronome';
-import { NOTE_SYMBOLS, REST_SYMBOLS, DURATION_NAMES } from '../utils/notationUtils';
+import { DURATION_NAMES } from '../utils/notationUtils';
+import { MusicalNoteIcon, MusicalRestIcon } from './MusicalIcons';
 import { Plus } from 'lucide-react';
 
 interface NotationToolbarProps {
@@ -70,16 +71,14 @@ export const NotationToolbar: React.FC<NotationToolbarProps> = ({
                 onSelectDuration(dur);
                 onToggleRestMode(false);
               }}
-              className={`w-8 h-8 sm:w-10 sm:h-10 rounded-lg border flex items-center justify-center cursor-grab active:cursor-grabbing transition-all shrink-0 ${
+              className={`w-8 h-8 sm:w-10 sm:h-10 rounded-lg border flex items-center justify-center cursor-grab active:cursor-grabbing transition-all shrink-0 p-1 ${
                 isSelected
                   ? 'bg-sky-500 text-slate-950 border-sky-400 font-bold shadow-lg shadow-sky-500/30 scale-105 ring-2 ring-sky-500/40'
                   : 'bg-slate-950/80 text-slate-200 border-slate-800 hover:border-slate-600 hover:bg-slate-800'
               }`}
               title={`${DURATION_NAMES[dur]} Note (${dur})`}
             >
-              <span className="text-lg sm:text-2xl font-serif leading-none select-none">
-                {NOTE_SYMBOLS[dur]}
-              </span>
+              <MusicalNoteIcon duration={dur} className="w-5 h-5 sm:w-6 sm:h-6 pointer-events-none" />
             </div>
           );
         })}
@@ -101,16 +100,14 @@ export const NotationToolbar: React.FC<NotationToolbarProps> = ({
                 onSelectDuration(dur);
                 onToggleRestMode(true);
               }}
-              className={`w-8 h-8 sm:w-10 sm:h-10 rounded-lg border flex items-center justify-center cursor-grab active:cursor-grabbing transition-all shrink-0 ${
+              className={`w-8 h-8 sm:w-10 sm:h-10 rounded-lg border flex items-center justify-center cursor-grab active:cursor-grabbing transition-all shrink-0 p-1 ${
                 isSelected
                   ? 'bg-sky-500 text-slate-950 border-sky-400 font-bold shadow-lg shadow-sky-500/30 scale-105 ring-2 ring-sky-500/40'
                   : 'bg-slate-950/80 text-slate-400 border-slate-800 hover:border-slate-600 hover:bg-slate-800 hover:text-slate-200'
               }`}
               title={`${DURATION_NAMES[dur]} Rest`}
             >
-              <span className="text-lg sm:text-2xl font-serif leading-none select-none">
-                {REST_SYMBOLS[dur]}
-              </span>
+              <MusicalRestIcon duration={dur} className="w-5 h-5 sm:w-6 sm:h-6 pointer-events-none" />
             </div>
           );
         })}

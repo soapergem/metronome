@@ -42,6 +42,7 @@ export function App() {
 
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [bpm, setBpm] = useState<number>(savedState?.bpm ?? 80);
+  const [bpmInput, setBpmInput] = useState<string>(String(savedState?.bpm ?? 80));
   const [timeSigNum, setTimeSigNum] = useState<number>(savedState?.timeSigNum ?? 4);
   const [timeSigDen, setTimeSigDen] = useState<number>(savedState?.timeSigDen ?? 4);
 
@@ -65,6 +66,9 @@ export function App() {
   const [soundType, setSoundType] = useState<SoundType>(savedState?.soundType ?? 'woodblock');
   const [isMuted, setIsMuted] = useState<boolean>(false);
 
+  // Tap tempo ref
+  const tapTimesRef = useRef<number[]>([]);
+
   // Save to localStorage on state changes
   useEffect(() => {
     try {
@@ -81,8 +85,85 @@ export function App() {
     } catch {}
   }, [bpm, timeSigNum, timeSigDen, soundType, elements]);
 
-  // Tap tempo ref
-  const tapTimesRef = useRef<number[]>([]);
+  const handleBpmInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setBpmInput(val);
+    const parsed = parseInt(val, 10);
+    if (!isNaN(parsed) && parsed >= 20 && parsed <= 300) {
+      setBpm(parsed);
+    }
+  };
+
+  const handleBpmInputBlur = () => {
+    const parsed = parseInt(bpmInput, 10);
+    if (isNaN(parsed) || parsed < 20) {
+      setBpm(20);
+      setBpmInput('20');
+    } else if (parsed > 300) {
+      setBpm(300);
+      setBpmInput('300');
+    } else {
+      setBpm(parsed);
+      setBpmInput(String(parsed));
+    }
+  };
+
+  const setAndSyncBpm = useCallback((updater: number | ((prev: number) => number)) => {
+    setBpm((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      const clamped = Math.max(20, Math.min(300, next));
+      setBpmInput(String(clamped));
+      return clamped;
+    });
+  }, []);
+
+  // Press-and-hold auto-repeat for BPM +/- buttons
+  const holdTimerRef = useRef<number | null>(null);
+  const holdIntervalRef = useRef<number | null>(null);
+
+  const stopBpmHold = useCallback(() => {
+    if (holdTimerRef.current !== null) {
+      clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+    if (holdIntervalRef.current !== null) {
+      clearInterval(holdIntervalRef.current);
+      holdIntervalRef.current = null;
+    }
+  }, []);
+
+  const startBpmHold = useCallback(
+    (delta: number, e: React.PointerEvent) => {
+      if (e.button !== 0 && e.pointerType === 'mouse') return;
+      e.preventDefault();
+
+      // Immediate step on press
+      setAndSyncBpm((b) => (delta > 0 ? Math.min(300, b + delta) : Math.max(20, b + delta)));
+      stopBpmHold();
+
+      let counter = 0;
+      // Start auto-repeat after 320ms hold
+      holdTimerRef.current = window.setTimeout(() => {
+        holdIntervalRef.current = window.setInterval(() => {
+          counter++;
+          // Gradually accelerate when held longer
+          const step = counter > 18 ? (delta > 0 ? 3 : -3) : counter > 8 ? (delta > 0 ? 2 : -2) : delta;
+          setAndSyncBpm((b) => (delta > 0 ? Math.min(300, b + step) : Math.max(20, b + step)));
+        }, 70);
+      }, 320);
+    },
+    [setAndSyncBpm, stopBpmHold]
+  );
+
+  useEffect(() => {
+    const handleGlobalPointerUp = () => stopBpmHold();
+    window.addEventListener('pointerup', handleGlobalPointerUp);
+    window.addEventListener('pointercancel', handleGlobalPointerUp);
+    return () => {
+      window.removeEventListener('pointerup', handleGlobalPointerUp);
+      window.removeEventListener('pointercancel', handleGlobalPointerUp);
+    };
+  }, [stopBpmHold]);
 
   // Update flattened sequence for AudioEngine whenever elements change
   useEffect(() => {
@@ -146,6 +227,65 @@ export function App() {
     return () => unsub();
   }, []);
 
+  // Screen Wake Lock API: Prevent mobile screen from dimming/sleeping while metronome is playing
+  useEffect(() => {
+    let wakeLockSentinel: any = null;
+
+    const requestWakeLock = async () => {
+      if ('wakeLock' in navigator && isPlaying) {
+        try {
+          wakeLockSentinel = await (navigator as any).wakeLock.request('screen');
+        } catch {
+          // Wake lock request can fail if device battery saver is active
+        }
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && isPlaying) {
+        requestWakeLock();
+      }
+    };
+
+    if (isPlaying) {
+      requestWakeLock();
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    } else {
+      if (wakeLockSentinel) {
+        wakeLockSentinel.release().catch(() => {});
+        wakeLockSentinel = null;
+      }
+    }
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (wakeLockSentinel) {
+        wakeLockSentinel.release().catch(() => {});
+        wakeLockSentinel = null;
+      }
+    };
+  }, [isPlaying]);
+
+  // Prime and unlock audio context on initial user tap/interaction
+  useEffect(() => {
+    const handleInitialUnlock = () => {
+      audioEngine.unlock();
+      window.removeEventListener('pointerdown', handleInitialUnlock);
+      window.removeEventListener('touchstart', handleInitialUnlock);
+      window.removeEventListener('keydown', handleInitialUnlock);
+    };
+
+    window.addEventListener('pointerdown', handleInitialUnlock, { passive: true });
+    window.addEventListener('touchstart', handleInitialUnlock, { passive: true });
+    window.addEventListener('keydown', handleInitialUnlock, { passive: true });
+
+    return () => {
+      window.removeEventListener('pointerdown', handleInitialUnlock);
+      window.removeEventListener('touchstart', handleInitialUnlock);
+      window.removeEventListener('keydown', handleInitialUnlock);
+    };
+  }, []);
+
   const handleTogglePlay = useCallback(() => {
     setIsPlaying((prev) => {
       const next = !prev;
@@ -175,7 +315,7 @@ export function App() {
       }
       const avg = intervals.reduce((a, b) => a + b, 0) / intervals.length;
       const newBpm = Math.round(60000 / avg);
-      if (newBpm >= 20 && newBpm <= 300) setBpm(newBpm);
+      if (newBpm >= 20 && newBpm <= 300) setAndSyncBpm(newBpm);
     }
   };
 
@@ -188,10 +328,10 @@ export function App() {
         handleTogglePlay();
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
-        setBpm((b) => Math.min(300, b + (e.shiftKey ? 5 : 1)));
+        setAndSyncBpm((b) => Math.min(300, b + (e.shiftKey ? 5 : 1)));
       } else if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setBpm((b) => Math.max(20, b - (e.shiftKey ? 5 : 1)));
+        setAndSyncBpm((b) => Math.max(20, b - (e.shiftKey ? 5 : 1)));
       } else if (e.key.toLowerCase() === 't') {
         handleTap();
       } else if (e.key === 'Backspace' || e.key === 'Delete') {
@@ -203,7 +343,7 @@ export function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleTogglePlay, selectedElementId]);
+  }, [handleTogglePlay, selectedElementId, setAndSyncBpm]);
 
   // Keyboard-style insertion replaces the selected position. The canvas owns
   // validation because it also handles drag-and-drop at exact positions.
@@ -297,22 +437,29 @@ export function App() {
         {/* 2. BPM Controls (-) [ 80 ] BPM (+) */}
         <div className="flex items-center gap-2 sm:gap-3 select-none flex-wrap justify-center">
           <button
-            onClick={() => setBpm((b) => Math.max(20, b - 1))}
-            className="w-9 h-9 sm:w-10 sm:h-10 rounded-full border-2 border-slate-700 bg-slate-900 flex items-center justify-center text-slate-300 hover:text-white hover:border-sky-400 active:scale-90 transition font-bold shrink-0"
-            title="Decrease BPM"
+            type="button"
+            onPointerDown={(e) => startBpmHold(-1, e)}
+            onPointerUp={stopBpmHold}
+            onPointerLeave={stopBpmHold}
+            onPointerCancel={stopBpmHold}
+            className="w-9 h-9 sm:w-10 sm:h-10 rounded-full border-2 border-slate-700 bg-slate-900 flex items-center justify-center text-slate-300 hover:text-white hover:border-sky-400 active:scale-90 transition font-bold shrink-0 touch-none"
+            title="Decrease BPM (hold to auto-repeat)"
           >
-            <Minus className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.5]" />
+            <Minus className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.5] pointer-events-none" />
           </button>
 
           <div className="flex items-center gap-1.5 sm:gap-2">
             <input
-              type="number"
-              min="20"
-              max="300"
-              value={bpm}
-              onChange={(e) => {
-                const val = parseInt(e.target.value, 10);
-                if (!isNaN(val)) setBpm(Math.max(20, Math.min(300, val)));
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={bpmInput}
+              onChange={handleBpmInputChange}
+              onBlur={handleBpmInputBlur}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.currentTarget.blur();
+                }
               }}
               className="w-16 sm:w-20 h-10 sm:h-11 border-2 border-slate-700 focus:border-sky-400 rounded-lg text-center text-xl sm:text-2xl font-bold font-mono bg-slate-900 text-white focus:outline-none"
             />
@@ -322,14 +469,19 @@ export function App() {
           </div>
 
           <button
-            onClick={() => setBpm((b) => Math.min(300, b + 1))}
-            className="w-9 h-9 sm:w-10 sm:h-10 rounded-full border-2 border-slate-700 bg-slate-900 flex items-center justify-center text-slate-300 hover:text-white hover:border-sky-400 active:scale-90 transition font-bold shrink-0"
-            title="Increase BPM"
+            type="button"
+            onPointerDown={(e) => startBpmHold(1, e)}
+            onPointerUp={stopBpmHold}
+            onPointerLeave={stopBpmHold}
+            onPointerCancel={stopBpmHold}
+            className="w-9 h-9 sm:w-10 sm:h-10 rounded-full border-2 border-slate-700 bg-slate-900 flex items-center justify-center text-slate-300 hover:text-white hover:border-sky-400 active:scale-90 transition font-bold shrink-0 touch-none"
+            title="Increase BPM (hold to auto-repeat)"
           >
-            <Plus className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.5]" />
+            <Plus className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.5] pointer-events-none" />
           </button>
 
           <button
+            type="button"
             onClick={handleTap}
             className="text-xs font-bold border-2 border-slate-700 bg-slate-900 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-lg text-sky-400 hover:border-sky-400 hover:bg-slate-800 transition uppercase tracking-wider active:scale-95"
             title="Tap Tempo (or press T)"

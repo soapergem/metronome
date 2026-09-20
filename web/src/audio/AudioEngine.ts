@@ -69,6 +69,7 @@ export class AudioEngine {
 
   // Subscribed listeners
   private listeners: Set<EventCallback> = new Set();
+  private silentAudioElement: HTMLAudioElement | null = null;
 
   constructor() {}
 
@@ -93,6 +94,40 @@ export class AudioEngine {
     if (this.audioCtx.state === 'suspended') {
       this.audioCtx.resume();
     }
+
+    // Playback category unlock for mobile / iOS Silent Switch bypass
+    if (!this.silentAudioElement && typeof Audio !== 'undefined') {
+      const silentWav = 'data:audio/wav;base64,UklGRjIAAABXQVZFZm10IBIAAAABAAEAQB8AAEAfAAABAAgAAABmYWN0BAAAAAAAAABkYXRhAAAAAA==';
+      this.silentAudioElement = new Audio(silentWav);
+      this.silentAudioElement.loop = true;
+      this.silentAudioElement.setAttribute('playsinline', 'true');
+      this.silentAudioElement.setAttribute('webkit-playsinline', 'true');
+    }
+  }
+
+  /**
+   * Pre-warms and unlocks the Web Audio pipeline on the first touch/click
+   */
+  public unlock() {
+    this.initAudio();
+    if (!this.audioCtx) return;
+
+    if (this.audioCtx.state === 'suspended') {
+      this.audioCtx.resume();
+    }
+
+    try {
+      // Play a zero-length silent buffer to prime iOS Web Audio clock
+      const buffer = this.audioCtx.createBuffer(1, 1, 22050);
+      const source = this.audioCtx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(this.audioCtx.destination);
+      source.start(0);
+    } catch {}
+
+    if (this.silentAudioElement) {
+      this.silentAudioElement.play().catch(() => {});
+    }
   }
 
   public subscribe(cb: EventCallback): () => void {
@@ -111,7 +146,7 @@ export class AudioEngine {
   }
 
   public start() {
-    this.initAudio();
+    this.unlock();
     if (this.isRunning) return;
 
     this.isRunning = true;
@@ -130,6 +165,9 @@ export class AudioEngine {
 
   public stop() {
     this.isRunning = false;
+    if (this.silentAudioElement) {
+      this.silentAudioElement.pause();
+    }
     if (this.timerId !== null) {
       clearInterval(this.timerId);
       this.timerId = null;
@@ -417,36 +455,69 @@ export class AudioEngine {
   private synthRimshot(time: number, velocity: number, pitch: number, outGain: GainNode) {
     if (!this.audioCtx) return;
 
-    const osc = this.audioCtx.createOscillator();
-    const oscGain = this.audioCtx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(450 * pitch, time);
-    osc.frequency.exponentialRampToValueAtTime(140 * pitch, time + 0.05);
+    // 1. Drum Head Body Tone (Tuned fundamental + pitch drop)
+    const bodyOsc = this.audioCtx.createOscillator();
+    const bodyGain = this.audioCtx.createGain();
+    const baseFreq = 220 * pitch;
 
-    oscGain.gain.setValueAtTime(0.001, time);
-    oscGain.gain.exponentialRampToValueAtTime(velocity * 0.8, time + 0.002);
-    oscGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.06);
+    bodyOsc.type = 'triangle';
+    bodyOsc.frequency.setValueAtTime(baseFreq * 1.8, time);
+    bodyOsc.frequency.exponentialRampToValueAtTime(baseFreq * 0.85, time + 0.045);
 
-    osc.connect(oscGain);
-    oscGain.connect(outGain);
+    bodyGain.gain.setValueAtTime(0.001, time);
+    bodyGain.gain.linearRampToValueAtTime(velocity * 0.75, time + 0.0015);
+    bodyGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.08);
 
-    osc.start(time);
-    osc.stop(time + 0.065);
+    bodyOsc.connect(bodyGain);
+    bodyGain.connect(outGain);
 
-    const snapOsc = this.audioCtx.createOscillator();
-    const snapGain = this.audioCtx.createGain();
-    snapOsc.type = 'triangle';
-    snapOsc.frequency.setValueAtTime(1800 * pitch, time);
+    bodyOsc.start(time);
+    bodyOsc.stop(time + 0.085);
 
-    snapGain.gain.setValueAtTime(0.001, time);
-    snapGain.gain.exponentialRampToValueAtTime(velocity * 0.5, time + 0.001);
-    snapGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.02);
+    // 2. Snare Wire Sizzle (Filtered White Noise)
+    const noiseDuration = 0.14;
+    const bufferSize = Math.floor(this.audioCtx.sampleRate * noiseDuration);
+    const noiseBuffer = this.audioCtx.createBuffer(1, bufferSize, this.audioCtx.sampleRate);
+    const output = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      output[i] = Math.random() * 2 - 1;
+    }
 
-    snapOsc.connect(snapGain);
-    snapGain.connect(outGain);
+    const whiteNoise = this.audioCtx.createBufferSource();
+    whiteNoise.buffer = noiseBuffer;
 
-    snapOsc.start(time);
-    snapOsc.stop(time + 0.025);
+    const noiseFilter = this.audioCtx.createBiquadFilter();
+    noiseFilter.type = 'highpass';
+    noiseFilter.frequency.setValueAtTime(1600, time);
+
+    const noiseGain = this.audioCtx.createGain();
+    noiseGain.gain.setValueAtTime(0.001, time);
+    noiseGain.gain.linearRampToValueAtTime(velocity * 0.85, time + 0.001);
+    noiseGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.13);
+
+    whiteNoise.connect(noiseFilter);
+    noiseFilter.connect(noiseGain);
+    noiseGain.connect(outGain);
+
+    whiteNoise.start(time);
+    whiteNoise.stop(time + noiseDuration);
+
+    // 3. Rimshot Transient Crack (High resonant wood/metal impact)
+    const crackOsc = this.audioCtx.createOscillator();
+    const crackGain = this.audioCtx.createGain();
+    crackOsc.type = 'square';
+    crackOsc.frequency.setValueAtTime(1450 * pitch, time);
+    crackOsc.frequency.exponentialRampToValueAtTime(450 * pitch, time + 0.015);
+
+    crackGain.gain.setValueAtTime(0.001, time);
+    crackGain.gain.linearRampToValueAtTime(velocity * 0.65, time + 0.0008);
+    crackGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.02);
+
+    crackOsc.connect(crackGain);
+    crackGain.connect(outGain);
+
+    crackOsc.start(time);
+    crackOsc.stop(time + 0.025);
   }
 
   private synthCowbell(time: number, velocity: number, pitch: number, outGain: GainNode) {

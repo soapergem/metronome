@@ -49,7 +49,7 @@ invalidate:
     distribution="$({{TF}} output -raw cloudfront_distribution_id)"
     aws cloudfront create-invalidation \
         --distribution-id "$distribution" \
-        --paths "/index.html" "/*.json" | jq
+        --paths "/*" | jq
 
 # build, upload, and clear the cache in one step
 deploy: build sync invalidate
