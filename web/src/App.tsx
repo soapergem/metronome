@@ -41,6 +41,7 @@ export function App() {
   const savedState = loadSavedState();
 
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [isStarting, setIsStarting] = useState<boolean>(false);
   const [bpm, setBpm] = useState<number>(savedState?.bpm ?? 80);
   const [bpmInput, setBpmInput] = useState<string>(String(savedState?.bpm ?? 80));
   const [timeSigNum, setTimeSigNum] = useState<number>(savedState?.timeSigNum ?? 4);
@@ -209,7 +210,7 @@ export function App() {
     audioEngine.updateRhythmSettings({
       enabled: true,
       volume: 0.95,
-      sound: soundType === 'woodblock' ? 'rimshot' : 'digital',
+      sound: soundType,
       muted: isMuted,
       solo: false,
     });
@@ -266,38 +267,20 @@ export function App() {
     };
   }, [isPlaying]);
 
-  // Prime and unlock audio context on initial user tap/interaction
-  useEffect(() => {
-    const handleInitialUnlock = () => {
-      audioEngine.unlock();
-      window.removeEventListener('pointerdown', handleInitialUnlock);
-      window.removeEventListener('touchstart', handleInitialUnlock);
-      window.removeEventListener('keydown', handleInitialUnlock);
-    };
+  const handleTogglePlay = useCallback(async () => {
+    if (isStarting) return;
+    if (isPlaying) {
+      audioEngine.stop();
+      setIsPlaying(false);
+      setActiveNoteId(null);
+      return;
+    }
 
-    window.addEventListener('pointerdown', handleInitialUnlock, { passive: true });
-    window.addEventListener('touchstart', handleInitialUnlock, { passive: true });
-    window.addEventListener('keydown', handleInitialUnlock, { passive: true });
-
-    return () => {
-      window.removeEventListener('pointerdown', handleInitialUnlock);
-      window.removeEventListener('touchstart', handleInitialUnlock);
-      window.removeEventListener('keydown', handleInitialUnlock);
-    };
-  }, []);
-
-  const handleTogglePlay = useCallback(() => {
-    setIsPlaying((prev) => {
-      const next = !prev;
-      if (next) {
-        audioEngine.start();
-      } else {
-        audioEngine.stop();
-        setActiveNoteId(null);
-      }
-      return next;
-    });
-  }, []);
+    setIsStarting(true);
+    const started = await audioEngine.start();
+    setIsStarting(false);
+    if (started) setIsPlaying(true);
+  }, [isPlaying, isStarting]);
 
   // Tap Tempo
   const handleTap = () => {
@@ -418,6 +401,7 @@ export function App() {
         {/* 1. Large Circular Play Button Matching Wireframe */}
         <button
           onClick={handleTogglePlay}
+          disabled={isStarting}
           className={`w-28 h-28 sm:w-36 sm:h-36 md:w-40 md:h-40 rounded-full border-4 sm:border-[5px] flex items-center justify-center transition-all duration-150 transform active:scale-95 shadow-2xl shrink-0 ${
             isPlaying
               ? isPulseAccented
@@ -425,12 +409,12 @@ export function App() {
                 : 'bg-rose-600 border-rose-500 text-white shadow-rose-600/30 ring-4 ring-rose-600/20'
               : 'bg-slate-900 hover:bg-slate-800 border-sky-400/80 hover:border-sky-300 text-sky-400 shadow-sky-500/20 hover:shadow-sky-500/30'
           }`}
-          aria-label={isPlaying ? 'Stop' : 'Play'}
+          aria-label={isStarting ? 'Starting audio' : isPlaying ? 'Stop' : 'Play'}
         >
           {isPlaying ? (
             <Square className="w-10 h-10 sm:w-14 sm:h-14 fill-current text-white" />
           ) : (
-            <Play className="w-12 h-12 sm:w-16 sm:h-16 fill-current ml-1 sm:ml-2" />
+            <Play className={`w-12 h-12 sm:w-16 sm:h-16 fill-current ml-1 sm:ml-2 ${isStarting ? 'animate-pulse' : ''}`} />
           )}
         </button>
 

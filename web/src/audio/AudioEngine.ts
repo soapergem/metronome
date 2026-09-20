@@ -70,6 +70,8 @@ export class AudioEngine {
   // Subscribed listeners
   private listeners: Set<EventCallback> = new Set();
   private silentAudioElement: HTMLAudioElement | null = null;
+  private unlockPromise: Promise<void> | null = null;
+  private startRequestId = 0;
 
   constructor() {}
 
@@ -91,43 +93,77 @@ export class AudioEngine {
       this.rhythmGainNode.connect(this.masterGainNode);
     }
 
-    if (this.audioCtx.state === 'suspended') {
-      this.audioCtx.resume();
-    }
-
     // Playback category unlock for mobile / iOS Silent Switch bypass
     if (!this.silentAudioElement && typeof Audio !== 'undefined') {
-      const silentWav = 'data:audio/wav;base64,UklGRjIAAABXQVZFZm10IBIAAAABAAEAQB8AAEAfAAABAAgAAABmYWN0BAAAAAAAAABkYXRhAAAAAA==';
-      this.silentAudioElement = new Audio(silentWav);
+      this.silentAudioElement = new Audio(this.createSilentWavUrl());
       this.silentAudioElement.loop = true;
+      this.silentAudioElement.preload = 'auto';
       this.silentAudioElement.setAttribute('playsinline', 'true');
       this.silentAudioElement.setAttribute('webkit-playsinline', 'true');
     }
   }
 
+  private createSilentWavUrl(): string {
+    const sampleRate = 8000;
+    const sampleCount = sampleRate;
+    const bytesPerSample = 2;
+    const dataSize = sampleCount * bytesPerSample;
+    const buffer = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(buffer);
+
+    const writeText = (offset: number, text: string) => {
+      for (let i = 0; i < text.length; i++) {
+        view.setUint8(offset + i, text.charCodeAt(i));
+      }
+    };
+
+    writeText(0, 'RIFF');
+    view.setUint32(4, 36 + dataSize, true);
+    writeText(8, 'WAVE');
+    writeText(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * bytesPerSample, true);
+    view.setUint16(32, bytesPerSample, true);
+    view.setUint16(34, 16, true);
+    writeText(36, 'data');
+    view.setUint32(40, dataSize, true);
+
+    return URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
+  }
+
   /**
    * Pre-warms and unlocks the Web Audio pipeline on the first touch/click
    */
-  public unlock() {
+  public unlock(): Promise<void> {
+    if (this.unlockPromise) return this.unlockPromise;
+
     this.initAudio();
-    if (!this.audioCtx) return;
+    if (!this.audioCtx) return Promise.resolve();
 
-    if (this.audioCtx.state === 'suspended') {
-      this.audioCtx.resume();
-    }
+    const audioCtx = this.audioCtx;
+    const resumePromise = audioCtx.state === 'suspended'
+      ? audioCtx.resume()
+      : Promise.resolve();
+    const mediaPromise = this.silentAudioElement
+      ? this.silentAudioElement.play()
+      : Promise.resolve();
 
-    try {
-      // Play a zero-length silent buffer to prime iOS Web Audio clock
-      const buffer = this.audioCtx.createBuffer(1, 1, 22050);
-      const source = this.audioCtx.createBufferSource();
-      source.buffer = buffer;
-      source.connect(this.audioCtx.destination);
-      source.start(0);
-    } catch {}
+    this.unlockPromise = Promise.allSettled([resumePromise, mediaPromise])
+      .then(() => {
+        const buffer = audioCtx.createBuffer(1, 128, audioCtx.sampleRate);
+        const source = audioCtx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(audioCtx.destination);
+        source.start();
+      })
+      .finally(() => {
+        this.unlockPromise = null;
+      });
 
-    if (this.silentAudioElement) {
-      this.silentAudioElement.play().catch(() => {});
-    }
+    return this.unlockPromise;
   }
 
   public subscribe(cb: EventCallback): () => void {
@@ -145,13 +181,15 @@ export class AudioEngine {
     }, delay);
   }
 
-  public start() {
-    this.unlock();
-    if (this.isRunning) return;
+  public async start(): Promise<boolean> {
+    if (this.isRunning) return true;
+    const requestId = ++this.startRequestId;
+    await this.unlock();
+    if (requestId !== this.startRequestId) return false;
 
     this.isRunning = true;
     if (this.audioCtx) {
-      const startTime = this.audioCtx.currentTime + 0.05;
+      const startTime = this.audioCtx.currentTime + 0.1;
       this.nextPulseTime = startTime;
       this.nextRhythmNoteTime = startTime;
       this.currentPulseBeat = 0;
@@ -161,9 +199,12 @@ export class AudioEngine {
     this.timerId = window.setInterval(() => {
       this.scheduler();
     }, this.lookaheadMs);
+    this.scheduler();
+    return true;
   }
 
   public stop() {
+    this.startRequestId++;
     this.isRunning = false;
     if (this.silentAudioElement) {
       this.silentAudioElement.pause();
